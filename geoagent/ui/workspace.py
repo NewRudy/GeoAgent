@@ -62,6 +62,30 @@ def _safe_create_binding() -> tuple[Any | None, str]:
         return None, str(exc)
 
 
+_WORKSPACE_CSS = """
+.geoagent-scroll, .geoagent-scroll * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(127, 127, 127, 0.55) transparent;
+}
+.geoagent-scroll::-webkit-scrollbar,
+.geoagent-scroll *::-webkit-scrollbar { width: 10px; height: 10px; }
+.geoagent-scroll::-webkit-scrollbar-track,
+.geoagent-scroll *::-webkit-scrollbar-track { background: transparent; }
+.geoagent-scroll::-webkit-scrollbar-thumb,
+.geoagent-scroll *::-webkit-scrollbar-thumb {
+    background-color: rgba(127, 127, 127, 0.55);
+    border-radius: 5px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+.geoagent-scroll::-webkit-scrollbar-thumb:hover,
+.geoagent-scroll *::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(127, 127, 127, 0.85);
+    background-clip: content-box;
+}
+"""
+
+
 @solara.component
 def WorkspacePage() -> None:
     """Render the map chat workspace."""
@@ -113,11 +137,17 @@ def WorkspacePage() -> None:
         map_label = "unavailable"
         binding_error = str(exc)
 
-    with solara.Column(gap="12px"):
+    solara.Style(_WORKSPACE_CSS)
+    with solara.Column(gap="12px", style={"padding": "12px"}):
         solara.Markdown(f"## GeoAgent {__version__}")
-        with solara.Row(gap="12px"):
+        with solara.Row(gap="16px", style={"alignItems": "stretch"}):
             with solara.Column(
-                gap="8px", style={"minWidth": "280px", "maxWidth": "360px"}
+                gap="12px",
+                style={
+                    "width": "320px",
+                    "flex": "0 0 320px",
+                    "overflow": "visible",
+                },
             ):
                 solara.Select(
                     label="Provider",
@@ -129,6 +159,7 @@ def WorkspacePage() -> None:
                     label="Model",
                     value=model_id.value,
                     on_value=model_id.set,
+                    continuous_update=False,
                 )
                 solara.Checkbox(
                     label="Fast mode",
@@ -145,6 +176,7 @@ def WorkspacePage() -> None:
                     value=prompt.value,
                     on_value=prompt.set,
                     rows=5,
+                    continuous_update=False,
                 )
                 solara.Button(
                     "Send",
@@ -159,11 +191,26 @@ def WorkspacePage() -> None:
                     "Confirmation-required tools are denied unless auto-approve is enabled."
                 )
 
-            with solara.Column(gap="8px", style={"minWidth": "360px", "flex": "1"}):
+            with solara.Column(
+                gap="12px",
+                classes=["geoagent-scroll"],
+                style={
+                    "flex": "1 1 auto",
+                    "minWidth": "0",
+                    "overflow": "hidden",
+                },
+            ):
                 if binding_error:
                     solara.Markdown(f"**Map unavailable**\n\n{binding_error}")
                 elif map_obj is not None:
-                    solara.display(map_obj)
+                    with solara.Div(
+                        style={
+                            "height": "520px",
+                            "borderRadius": "6px",
+                            "overflow": "hidden",
+                        }
+                    ):
+                        solara.display(map_obj)
 
                 solara.Markdown("### Chat")
                 if not history.value:

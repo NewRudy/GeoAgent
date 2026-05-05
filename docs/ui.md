@@ -1,27 +1,65 @@
-# Web UI
+# UI
 
 GeoAgent includes a Solara-based browser workspace for map-bound chat. The UI
 creates a persistent live map for the current browser session, binds it to a
 GeoAgent, and lets you control the provider, model, fast mode, and confirmation
 policy from the page.
 
+GeoAgent also includes an ipywidgets-based Jupyter chat panel for existing
+`leafmap.Map` and `anymap.Map` objects. It renders the live map on the left and
+chat controls on the right, with a collapsible chat panel when the map needs
+the full width.
+
 ## Quick Start
 
-Install the UI dependency plus at least one web map backend:
+Install the Jupyter widget dependency plus at least one web map backend and
+provider:
+
+```bash
+pip install "GeoAgent[jupyter,anymap,openai]"
+```
+
+For `leafmap` notebooks:
+
+```bash
+pip install "GeoAgent[jupyter,leafmap,openai]"
+```
+
+## Jupyter Widget
+
+Display a `leafmap` map with an inline chat panel:
+
+```python
+import leafmap
+from geoagent.ui import map_chat
+
+m = leafmap.Map()
+map_chat(m)
+```
+
+Display an `anymap` map with explicit provider settings:
+
+```python
+import anymap
+from geoagent.ui import map_chat
+
+m = anymap.Map()
+map_chat(m, provider="openai", model_id="gpt-5.5")
+```
+
+The notebook widget uses `ipywidgets`, not Solara. It binds GeoAgent to the
+same live map object, so layers and view changes from chat tools update the map
+shown in the left pane. Use the chat toggle above the split view to collapse
+the right panel and let the map take the full notebook width. If GeoAgent
+cannot infer the map backend, pass `map_library="leafmap"` or
+`map_library="anymap"`.
+
+## Browser Workspace
+
+Launch the Solara browser workspace:
 
 ```bash
 pip install "GeoAgent[ui,anymap,openai]"
-```
-
-`anymap` is preferred. If it is not installed, the UI tries `leafmap`:
-
-```bash
-pip install "GeoAgent[ui,leafmap,openai]"
-```
-
-Launch the UI:
-
-```bash
 geoagent ui
 ```
 
@@ -38,7 +76,7 @@ If you are working from a source checkout you can also run
 
 ## Workspace
 
-The first screen is the chat-and-map workspace. It includes:
+The browser workspace includes:
 
 - a persistent interactive map where layers accumulate across prompts;
 - provider and model controls for OpenAI, ChatGPT/Codex OAuth, Anthropic,

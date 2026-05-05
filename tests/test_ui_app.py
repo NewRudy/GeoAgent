@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import sys
 import types
+from pathlib import Path
 
 from geoagent.core.safety import ConfirmRequest
 from geoagent.ui import app
@@ -96,10 +97,92 @@ def test_create_ui_map_binding_missing_dependencies(monkeypatch) -> None:
     assert "GeoAgent[leafmap,ui]" in message
 
 
+def test_create_map_binding_for_object_infers_anymap(monkeypatch) -> None:
+    """Verify existing anymap objects can be wrapped for notebook chat."""
+
+    class FakeMap:
+        __module__ = "anymap"
+
+    def fake_for_anymap(map_obj, **kwargs):
+        return "agent"
+
+    monkeypatch.setattr("geoagent.for_anymap", fake_for_anymap)
+    map_obj = FakeMap()
+
+    binding = app.create_map_binding_for_object(map_obj)
+
+    assert binding.map_obj is map_obj
+    assert binding.map_library == "anymap"
+    assert binding.factory is fake_for_anymap
+
+
+def test_create_map_binding_for_object_infers_leafmap(monkeypatch) -> None:
+    """Verify existing leafmap objects can be wrapped for notebook chat."""
+
+    class FakeMap:
+        __module__ = "leafmap.leafmap"
+
+    def fake_for_leafmap(map_obj, **kwargs):
+        return "agent"
+
+    monkeypatch.setattr("geoagent.for_leafmap", fake_for_leafmap)
+    map_obj = FakeMap()
+
+    binding = app.create_map_binding_for_object(map_obj)
+
+    assert binding.map_obj is map_obj
+    assert binding.map_library == "leafmap"
+    assert binding.factory is fake_for_leafmap
+
+
+def test_create_map_binding_for_object_accepts_explicit_library(monkeypatch) -> None:
+    """Verify explicit map_library overrides class-module inference."""
+
+    class FakeMap:
+        __module__ = "custom_map"
+
+    def fake_for_leafmap(map_obj, **kwargs):
+        return "agent"
+
+    monkeypatch.setattr("geoagent.for_leafmap", fake_for_leafmap)
+    binding = app.create_map_binding_for_object(FakeMap(), map_library="leafmap")
+
+    assert binding.map_library == "leafmap"
+    assert binding.factory is fake_for_leafmap
+
+
+def test_create_map_binding_for_object_unknown_map_error() -> None:
+    """Verify unknown map objects ask for an explicit backend."""
+
+    class FakeMap:
+        __module__ = "custom_map"
+
+    try:
+        app.create_map_binding_for_object(FakeMap())
+    except ValueError as exc:
+        message = str(exc)
+    else:  # pragma: no cover - defensive assertion
+        raise AssertionError("Expected unknown map inference to fail")
+
+    assert "map_library" in message
+    assert "anymap" in message
+    assert "leafmap" in message
+
+
 def test_ui_package_imports_without_provider_credentials() -> None:
     """Verify the UI package import does not initialize model providers."""
     module = importlib.import_module("geoagent.ui")
     assert hasattr(module, "launch_ui")
+
+
+def test_notebook_widget_exports_import_without_ipywidgets(monkeypatch) -> None:
+    """Verify notebook UI exports are lazy and do not need provider credentials."""
+    monkeypatch.setitem(sys.modules, "ipywidgets", None)
+    sys.modules.pop("geoagent.ui.widgets", None)
+    module = importlib.import_module("geoagent.ui")
+
+    assert callable(module.map_chat)
+    assert callable(module.MapChat)
 
 
 def test_solara_pages_import_with_stubbed_solara(monkeypatch) -> None:
@@ -315,3 +398,124 @@ def test_dispatch_prompt_handles_agent_exception() -> None:
     assert tool_calls == []
     assert new_history[-1]["status"] == "error"
     assert "network down" in new_history[-1]["text"]
+
+
+def _make_jupyter_chat():
+    """Build a MapChat against a mock leafmap object.
+
+    The Jupyter widget needs ipywidgets to be importable. Skip the test if
+    it is not available so this file still loads in headless CI configs
+    that exclude Jupyter extras.
+    """
+    import pytest
+
+    pytest.importorskip("ipywidgets")
+    from geoagent.testing._mocks import MockLeafmap
+    from geoagent.ui.widgets import MapChat
+
+    return MapChat(MockLeafmap(), map_library="leafmap")
+
+
+def test_jupyter_chat_pane_padding_is_uniform() -> None:
+    """Verify the chat pane owns padding and rows carry no horizontal margin.
+
+    Regression guard: the previous layout sprinkled `margin="0 12px ..."` on
+    every row, which left the chat history misaligned with the controls. The
+    fix moves padding to the chat-pane container and removes per-row insets.
+    """
+    chat = _make_jupyter_chat()
+
+    pane_layout = chat.chat_pane.layout
+    assert pane_layout.padding == "12px"
+
+    # The controls VBox holds the labelled fields and the send/status row.
+    # No horizontal margin should remain on the controls container or on its
+    # direct children.
+    controls = chat.chat_pane.children[0]
+    assert controls.layout.margin == "0"
+    for child in controls.children:
+        margin = child.layout.margin or ""
+        # Margin format: "top right bottom left". After the fix, right and
+        # left should always be 0 so children align flush with the padded
+        # parent.
+        parts = margin.split()
+        if len(parts) == 4:
+            top, right, bottom, left = parts
+            assert right == "0", f"unexpected right margin {margin!r}"
+            assert left == "0", f"unexpected left margin {margin!r}"
+
+
+def test_jupyter_history_box_has_scroll_class() -> None:
+    """Verify the chat scroll containers opt in to themed scrollbar CSS."""
+    chat = _make_jupyter_chat()
+    assert "geoagent-scroll" in chat.history_box._dom_classes
+    assert "geoagent-scroll" in chat.tool_box._dom_classes
+
+
+def test_jupyter_render_skips_unchanged_history() -> None:
+    """Verify _render does not rebuild chat children when nothing changed.
+
+    Reassigning ``children`` on an ipywidgets VBox recreates the message
+    DOM in the front-end, which reliably steals focus from the prompt
+    textarea. This guard ensures back-to-back renders with the same
+    history reuse the existing children.
+    """
+    chat = _make_jupyter_chat()
+    chat.history = [{"role": "user", "text": "hello"}]
+    chat._render()
+    first_children = chat.history_box.children
+    chat._render()
+    assert chat.history_box.children is first_children
+
+
+def test_solara_workspace_disables_continuous_update() -> None:
+    """Verify the Solara prompt input only writes back on blur.
+
+    Without ``continuous_update=False`` every keystroke triggers a
+    reactive update and re-renders the whole page, briefly stealing
+    focus from the textarea. We assert the literal kwarg in the source
+    so a future edit cannot regress the behaviour silently.
+    """
+    workspace_path = (
+        Path(__file__).resolve().parents[1] / "geoagent" / "ui" / "workspace.py"
+    )
+    source = workspace_path.read_text(encoding="utf-8")
+    # Both InputText (Model) and InputTextArea (Prompt) should disable
+    # per-keystroke commits. Searching for the kwarg is more robust than
+    # rendering the component, which would require a Solara browser test
+    # harness.
+    assert source.count("continuous_update=False") >= 2
+
+
+def test_solara_workspace_uses_fixed_left_column_width() -> None:
+    """Verify the controls column has a fixed width and visible overflow.
+
+    The previous layout set ``minWidth: 280px, maxWidth: 360px`` which let
+    the controls column shrink/grow with the viewport, producing an
+    inconsistent widget width. It also defaulted to ``overflow: auto``
+    which surfaced an unwanted vertical scrollbar around the provider and
+    model dropdowns.
+    """
+    workspace_path = (
+        Path(__file__).resolve().parents[1] / "geoagent" / "ui" / "workspace.py"
+    )
+    source = workspace_path.read_text(encoding="utf-8")
+    assert '"width": "320px"' in source
+    assert '"flex": "0 0 320px"' in source
+    assert '"overflow": "visible"' in source
+
+
+def test_solara_workspace_injects_scroll_style() -> None:
+    """Verify the workspace mounts a theme-aware scrollbar style.
+
+    The CSS uses neutral 50%-grey thumb colour so the scrollbar stays
+    visible against both Vuetify light and dark themes. Without this
+    style the default browser scrollbar disappears against the dark
+    background.
+    """
+    workspace_path = (
+        Path(__file__).resolve().parents[1] / "geoagent" / "ui" / "workspace.py"
+    )
+    source = workspace_path.read_text(encoding="utf-8")
+    assert "solara.Style(_WORKSPACE_CSS)" in source
+    assert ".geoagent-scroll" in source

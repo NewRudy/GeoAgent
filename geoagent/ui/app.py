@@ -1,4 +1,4 @@
-"""Runtime helpers for the Solara GeoAgent web UI."""
+"""Runtime helpers for GeoAgent UI frontends."""
 
 from __future__ import annotations
 
@@ -121,6 +121,7 @@ def create_bound_agent(
     model_id: str | None = None,
     fast: bool = False,
     auto_approve: bool = False,
+    extra_tools: list[Any] | None = None,
 ) -> GeoAgent:
     """Create a map-bound GeoAgent from current UI controls."""
     model = (model_id or "").strip() or None
@@ -133,7 +134,49 @@ def create_bound_agent(
         config=config,
         fast=bool(fast),
         confirm=confirmation_callback(bool(auto_approve)),
+        extra_tools=extra_tools,
     )
+
+
+def normalize_map_library(map_library: str | None) -> str:
+    """Return a supported map library id or raise an actionable error."""
+    value = str(map_library or "").strip().lower()
+    if value in {"anymap", "leafmap"}:
+        return value
+    supported = "`anymap` or `leafmap`"
+    if value:
+        raise ValueError(
+            f"Unsupported map_library={map_library!r}. Expected {supported}."
+        )
+    raise ValueError(f"Could not infer map library. Pass map_library as {supported}.")
+
+
+def infer_map_library(map_obj: Any) -> str:
+    """Infer the GeoAgent map library id from a map object's class module."""
+    module = str(getattr(map_obj.__class__, "__module__", "") or "")
+    root = module.split(".", 1)[0].lower()
+    if root in {"anymap", "leafmap"}:
+        return root
+    return normalize_map_library(None)
+
+
+def create_map_binding_for_object(
+    map_obj: Any,
+    map_library: str | None = None,
+) -> UiMapBinding:
+    """Create a UI binding around an existing live map object."""
+    library = (
+        normalize_map_library(map_library)
+        if map_library
+        else infer_map_library(map_obj)
+    )
+    if library == "anymap":
+        from geoagent import for_anymap
+
+        return UiMapBinding(map_obj=map_obj, map_library=library, factory=for_anymap)
+    from geoagent import for_leafmap
+
+    return UiMapBinding(map_obj=map_obj, map_library=library, factory=for_leafmap)
 
 
 def _compact_value(
@@ -275,6 +318,7 @@ def dispatch_prompt(
     model_id: str | None,
     fast: bool,
     auto_approve: bool,
+    extra_tools: list[Any] | None = None,
     create_agent: Callable[..., GeoAgent] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Run one UI send and return ``(next_history, tool_calls)``.
@@ -297,6 +341,7 @@ def dispatch_prompt(
             model_id=model_id,
             fast=fast,
             auto_approve=auto_approve,
+            extra_tools=extra_tools,
         )
         response = agent.chat(prompt)
         message = format_response_message(response)
@@ -321,9 +366,12 @@ __all__ = [
     "confirmation_callback",
     "confirmation_preview",
     "create_bound_agent",
+    "create_map_binding_for_object",
     "create_ui_map_binding",
     "default_model_for_provider",
     "default_provider",
     "dispatch_prompt",
     "format_response_message",
+    "infer_map_library",
+    "normalize_map_library",
 ]

@@ -91,6 +91,7 @@ and `pydantic`. Geospatial packages and provider clients are optional extras:
 | `GeoAgent[geoai]`       | geoai integration dependencies.                                   |
 | `GeoAgent[earthengine]` | Google Earth Engine dependencies.                                 |
 | `GeoAgent[ui]`          | Solara UI dependencies.                                           |
+| `GeoAgent[jupyter]`     | ipywidgets notebook chat UI dependencies.                         |
 | `GeoAgent[providers]`   | OpenAI, Anthropic, Gemini, Ollama, and LiteLLM provider clients.  |
 | `GeoAgent[all]`         | Most optional integrations. QGIS itself remains system-installed. |
 
@@ -224,6 +225,30 @@ from geoagent import for_anymap
 m = anymap.Map()
 agent = for_anymap(m)
 agent.chat("Change the basemap and list the current layers.")
+```
+
+Use the optional Jupyter chat panel with an existing `leafmap` or `anymap`
+map. The map stays on the left, the chat panel opens on the right, and the
+chat panel can be collapsed so the map takes the full width:
+
+```bash
+pip install "GeoAgent[jupyter,leafmap,openai]"
+```
+
+```python
+import leafmap
+from geoagent.ui import map_chat
+
+m = leafmap.Map()
+map_chat(m)
+```
+
+```python
+import anymap
+from geoagent.ui import map_chat
+
+m = anymap.Map()
+map_chat(m, provider="openai", model_id="gpt-5.5")
 ```
 
 Launch the browser workspace:

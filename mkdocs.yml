@@ -84,6 +84,7 @@ nav:
         - examples/intro.ipynb
         - examples/openai_codex.ipynb
         - examples/stream_chat_openai_codex.ipynb
+        - examples/jupyter_map_chat.ipynb
         - examples/live_mapping.ipynb
         - examples/qgis_agent.ipynb
         - examples/stac_workflow.ipynb

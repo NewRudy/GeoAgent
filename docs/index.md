@@ -138,6 +138,15 @@ agent.chat("Add a marker for Knoxville and zoom to it.")
 m
 ```
 
+For an inline notebook GUI with the map on the left and a collapsible chat
+panel on the right:
+
+```python
+from geoagent.ui import map_chat
+
+map_chat(m)
+```
+
 ### anymap
 
 ```python
@@ -147,6 +156,12 @@ from geoagent import for_anymap
 m = anymap.Map()
 agent = for_anymap(m)
 agent.chat("List layers and change the basemap.")
+```
+
+```python
+from geoagent.ui import map_chat
+
+map_chat(m, provider="openai", model_id="gpt-5.5")
 ```
 
 ### QGIS

@@ -56,10 +56,11 @@ earthdata = ["earthaccess>=0.10"]
 nasa-opera = ["earthaccess>=0.10"]
 whitebox = ["whitebox>=2.3.6"]
 ui = ["solara>=1.35", "starlette<2.0"]
+jupyter = ["ipywidgets>=8.0"]
 qgis = []
 providers = ["GeoAgent[openai,anthropic,gemini,ollama,litellm]"]
 all = [
-    "GeoAgent[providers,leafmap,anymap,geoai,geemap,earthengine,stac,earthdata,nasa-opera,whitebox,ui]",
+    "GeoAgent[providers,leafmap,anymap,geoai,geemap,earthengine,stac,earthdata,nasa-opera,whitebox,ui,jupyter]",
 ]
 dev = [
     "pytest>=8.0",
