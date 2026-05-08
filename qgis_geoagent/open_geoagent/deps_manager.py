@@ -150,15 +150,36 @@ def get_venv_site_packages(venv_dir: Optional[str] = None) -> str:
     return os.path.join(venv_dir, "lib", py_ver, "site-packages")
 
 
-def venv_exists() -> bool:
+def venv_exists(venv_dir: Optional[str] = None) -> bool:
     """Check if the plugin's virtual environment exists and has a Python executable.
+
+    Args:
+        venv_dir: Path to the venv directory. Defaults to get_venv_dir().
 
     Returns:
         True if the venv directory and Python executable exist.
     """
-    venv_dir = get_venv_dir()
+    if venv_dir is None:
+        venv_dir = get_venv_dir()
     python_path = get_venv_python_path(venv_dir)
     return os.path.isdir(venv_dir) and os.path.isfile(python_path)
+
+
+def venv_python_usable(venv_dir: Optional[str] = None) -> Tuple[bool, str]:
+    """Return whether the venv Python starts with the expected stdlib.
+
+    ``venv_exists`` intentionally stays cheap because it is used by settings
+    diagnostics and startup path checks. The installer calls this stronger
+    validation before reusing an existing venv for pip operations.
+    """
+    if venv_dir is None:
+        venv_dir = get_venv_dir()
+    python_path = get_venv_python_path(venv_dir)
+    if not os.path.isdir(venv_dir):
+        return False, f"Virtual environment does not exist: {venv_dir}"
+    if not os.path.isfile(python_path):
+        return False, f"Virtual environment Python is missing: {python_path}"
+    return _python_executable_usable(python_path)
 
 
 def ensure_venv_packages_available() -> bool:
@@ -368,6 +389,11 @@ def _python_executable_names() -> List[str]:
     return names
 
 
+def _python_version_spec() -> str:
+    """Return the Python major.minor version required by this QGIS session."""
+    return f"{sys.version_info.major}.{sys.version_info.minor}"
+
+
 def _looks_like_python_executable(path: Optional[str]) -> bool:
     """Return True when *path* names a Python interpreter binary."""
     if not path:
@@ -389,6 +415,73 @@ def _add_existing_python_candidate(
         return
     candidates.append(normalized)
     seen.add(normalized)
+
+
+def _is_macos_qgis_app_bundle_python(path: str) -> bool:
+    """Return True for Python binaries inside a QGIS macOS .app bundle."""
+    if not (platform.system() == "Darwin" or sys.platform == "darwin"):
+        return False
+    parts = os.path.abspath(path).split(os.sep)
+    for idx, part in enumerate(parts):
+        lower = part.lower()
+        if not (lower.startswith("qgis") and lower.endswith(".app")):
+            continue
+        return idx + 1 < len(parts) and parts[idx + 1] == "Contents"
+    return False
+
+
+def _python_executable_usable(path: str) -> Tuple[bool, str]:
+    """Return whether *path* can run as the current QGIS Python version.
+
+    Some official macOS QGIS app bundles include a ``python3.x`` binary whose
+    embedded prefix still points at the QGIS build machine. The file exists and
+    looks correct, but a subprocess fails before startup with ``No module named
+    encodings``. Validate candidates before using them for ``venv`` or ``uv``.
+    """
+    code = (
+        "import encodings, sys; "
+        f"raise SystemExit(0 if sys.version_info[:2] == "
+        f"({sys.version_info.major}, {sys.version_info.minor}) else 3)"
+    )
+    try:
+        result = subprocess.run(  # nosec B603
+            [path, "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=_get_clean_env(),
+            **_get_subprocess_kwargs(),
+        )
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+    if result.returncode == 0:
+        if _is_macos_qgis_app_bundle_python(path):
+            return (
+                False,
+                "QGIS app-bundle Python is not safe for creating virtual "
+                "environments; use uv-managed Python instead.",
+            )
+        return True, ""
+    if result.returncode == 3:
+        return False, f"wrong Python version; need {_python_version_spec()}"
+
+    error = (result.stderr or result.stdout or f"exit code {result.returncode}").strip()
+    if len(error) > 500:
+        error = "..." + error[-500:]
+    return False, error
+
+
+def _first_usable_python_candidate(
+    candidates: List[str], rejected: List[str]
+) -> Optional[str]:
+    """Return the first candidate that starts successfully."""
+    for candidate in candidates:
+        usable, reason = _python_executable_usable(candidate)
+        if usable:
+            return candidate
+        rejected.append(f"{candidate}: {reason}")
+    return None
 
 
 def _macos_bundle_dirs(path: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
@@ -483,6 +576,7 @@ def _find_python_executable() -> str:
     """
     candidates: List[str] = []
     seen = set()
+    rejected: List[str] = []
 
     # Strategy 1: Python may expose the real interpreter separately from the
     # GUI application executable.
@@ -490,15 +584,19 @@ def _find_python_executable() -> str:
         candidates, seen, getattr(sys, "_base_executable", None)
     )
     _add_existing_python_candidate(candidates, seen, sys.executable)
-    if candidates:
-        return candidates[0]
+    python_exe = _first_usable_python_candidate(candidates, rejected)
+    if python_exe:
+        return python_exe
 
     if platform.system() == "Darwin" or sys.platform == "darwin":
+        start = len(candidates)
         _add_macos_python_candidates(candidates, seen)
-        if candidates:
-            return candidates[0]
+        python_exe = _first_usable_python_candidate(candidates[start:], rejected)
+        if python_exe:
+            return python_exe
 
     if platform.system() != "Windows":
+        start = len(candidates)
         prefix_candidates = (
             getattr(sys, "base_prefix", None),
             getattr(sys, "base_exec_prefix", None),
@@ -524,13 +622,19 @@ def _find_python_executable() -> str:
 
         for name in _python_executable_names():
             _add_existing_python_candidate(candidates, seen, shutil.which(name))
-        if candidates:
-            return candidates[0]
+        python_exe = _first_usable_python_candidate(candidates[start:], rejected)
+        if python_exe:
+            return python_exe
+
+        details = "\n".join(f"  {item}" for item in rejected[:8])
+        if len(rejected) > 8:
+            details += f"\n  ... {len(rejected) - 8} more rejected candidates"
 
         raise RuntimeError(
             "Could not find a Python interpreter for dependency installation.\n"
-            f"sys.executable is not Python: {sys.executable}\n"
+            f"sys.executable is not a usable Python interpreter: {sys.executable}\n"
             "OpenGeoAgent cannot safely run QGIS itself as a Python executable."
+            + (f"\nRejected Python candidates:\n{details}" if details else "")
         )
 
     # Strategy 2: Check if sys.executable is already Python
@@ -675,6 +779,14 @@ def _verify_pip_and_return(python_path: str) -> str:
     Raises:
         RuntimeError: If pip cannot be made available.
     """
+    usable, reason = _python_executable_usable(python_path)
+    if not usable:
+        raise RuntimeError(
+            "Virtual environment Python is not usable.\n"
+            f"Python path: {python_path}\n"
+            f"Error: {reason}"
+        )
+
     env = _get_clean_env()
     kwargs = _get_subprocess_kwargs()
 
@@ -705,6 +817,35 @@ def _verify_pip_and_return(python_path: str) -> str:
         )
 
     return python_path
+
+
+def _truncated_subprocess_output(result) -> str:
+    """Return compact stderr/stdout text from a subprocess result."""
+    output = result.stderr or result.stdout or "Unknown error"
+    if len(output) > 1500:
+        output = output[:500] + "\n...\n" + output[-1000:]
+    return output
+
+
+def _ensure_usable_venv(
+    venv_dir: str,
+    progress_callback: Optional[Callable[[int, str], None]] = None,
+) -> str:
+    """Return a usable venv Python, recreating stale broken venvs when needed."""
+    if venv_exists(venv_dir):
+        usable, reason = venv_python_usable(venv_dir)
+        if usable:
+            return get_venv_python_path(venv_dir)
+        if progress_callback:
+            progress_callback(
+                5,
+                "Existing virtual environment is unusable; recreating it...",
+            )
+        _cleanup_partial_venv(venv_dir)
+
+    if progress_callback:
+        progress_callback(5, "Creating virtual environment...")
+    return create_venv(venv_dir)
 
 
 def create_venv(venv_dir: str) -> str:
@@ -745,11 +886,26 @@ def create_venv(venv_dir: str) -> str:
     env = _get_clean_env()
     kwargs = _get_subprocess_kwargs()
 
-    # Strategy 0: Use uv venv when available (fastest, no pip needed)
+    python_exe: Optional[str] = None
+    python_lookup_error = ""
+    try:
+        python_exe = _find_python_executable()
+    except RuntimeError as exc:
+        python_lookup_error = str(exc)
+
+    uv_error = ""
+
+    # Strategy 0: Use uv venv when available (fastest, no pip needed). If the
+    # official macOS QGIS bundle exposes only an unstartable python3.x binary,
+    # require uv-managed Python for the matching version instead of letting uv
+    # reuse the broken app-bundle interpreter.
     if _uv_usable():
         uv_path = get_uv_path()
-        python_exe = _find_python_executable()
-        cmd = [uv_path, "venv", "--python", python_exe, venv_dir]
+        uv_python = python_exe or _python_version_spec()
+        cmd = [uv_path, "venv"]
+        if python_exe is None:
+            cmd.append("--managed-python")
+        cmd += ["--python", uv_python, venv_dir]
         result = subprocess.run(  # nosec B603
             cmd,
             capture_output=True,
@@ -759,13 +915,28 @@ def create_venv(venv_dir: str) -> str:
             **kwargs,
         )
         if result.returncode == 0 and os.path.isfile(python_path):
-            return python_path
+            usable, reason = _python_executable_usable(python_path)
+            if usable:
+                return python_path
+            uv_error = (
+                "uv created a virtual environment, but its Python could not "
+                f"start: {reason}"
+            )
+        elif result.returncode != 0:
+            uv_error = result.stderr or result.stdout or ""
         # uv venv failed — clean up and fall through to pip strategies
         _cleanup_partial_venv(venv_dir)
 
     # Strategy 1: Subprocess with the real Python executable
-    python_exe = _find_python_executable()
     subprocess_error = ""
+    if python_exe is None:
+        raise RuntimeError(
+            "Could not create a virtual environment because no working Python "
+            "interpreter was found. uv was either unavailable or could not "
+            f"create one from the {_python_version_spec()} version request.\n\n"
+            + (f"uv error: {uv_error}\n\n" if uv_error else "")
+            + python_lookup_error
+        )
 
     cmd = [python_exe, "-m", "venv", venv_dir]
     result = subprocess.run(  # nosec B603
@@ -823,6 +994,8 @@ def create_venv(venv_dir: str) -> str:
     ]
     if subprocess_error:
         details.append(f"Subprocess error: {subprocess_error}")
+    if uv_error:
+        details.append(f"uv error: {uv_error}")
     if strategy3_error:
         details.append(f"Strategy 3 error: {strategy3_error}")
 
@@ -860,7 +1033,25 @@ def install_packages(
     env = _get_clean_env()
     kwargs = _get_subprocess_kwargs()
 
+    usable, reason = venv_python_usable(venv_dir)
+    if not usable:
+        return (
+            False,
+            "Virtual environment Python is not usable. Re-run dependency "
+            f"installation to recreate it.\nPython path: {python_path}\n"
+            f"Error: {reason}",
+        )
+
     use_uv = _uv_usable()
+    pip_cmd = [
+        python_path,
+        "-m",
+        "pip",
+        "install",
+        "--upgrade",
+        "--disable-pip-version-check",
+        "--prefer-binary",
+    ] + packages
     if use_uv:
         uv_path = get_uv_path()
         cmd = [
@@ -872,15 +1063,7 @@ def install_packages(
             "--upgrade",
         ] + packages
     else:
-        cmd = [
-            python_path,
-            "-m",
-            "pip",
-            "install",
-            "--upgrade",
-            "--disable-pip-version-check",
-            "--prefer-binary",
-        ] + packages
+        cmd = pip_cmd
 
     if progress_callback:
         installer = "uv" if use_uv else "pip"
@@ -895,15 +1078,41 @@ def install_packages(
         **kwargs,
     )
 
-    if result.returncode != 0:
-        error_output = result.stderr or result.stdout or "Unknown error"
-        # Truncate long error messages
-        if len(error_output) > 1000:
-            error_output = "..." + error_output[-1000:]
-        installer = "uv pip" if use_uv else "pip"
-        return False, f"{installer} install failed:\n{error_output}"
+    if result.returncode == 0:
+        return True, "Packages installed successfully."
 
-    return True, "Packages installed successfully."
+    error_output = _truncated_subprocess_output(result)
+
+    if use_uv:
+        if progress_callback:
+            progress_callback(45, "uv install failed, retrying with pip...")
+        try:
+            _verify_pip_and_return(python_path)
+        except RuntimeError as exc:
+            return (
+                False,
+                "uv pip install failed and pip fallback is unavailable.\n\n"
+                f"uv error:\n{error_output}\n\npip bootstrap error:\n{exc}",
+            )
+
+        pip_result = subprocess.run(  # nosec B603
+            pip_cmd,
+            capture_output=True,
+            text=True,
+            timeout=600,
+            env=env,
+            **kwargs,
+        )
+        if pip_result.returncode == 0:
+            return True, "Packages installed successfully."
+        return (
+            False,
+            "uv pip install failed, and pip fallback also failed.\n\n"
+            f"uv error:\n{error_output}\n\n"
+            f"pip error:\n{_truncated_subprocess_output(pip_result)}",
+        )
+
+    return False, f"pip install failed:\n{error_output}"
 
 
 class DepsInstallWorker(QThread):
@@ -942,14 +1151,15 @@ class DepsInstallWorker(QThread):
                 else:
                     self.progress.emit(5, "uv ready.")
 
-            # Step 1: Create venv if needed
-            if not venv_exists():
-                self.progress.emit(5, "Creating virtual environment...")
-                try:
-                    create_venv(venv_dir)
-                except RuntimeError as e:
-                    self.finished.emit(False, str(e))
-                    return
+            # Step 1: Create venv if needed, or recreate stale broken venvs
+            try:
+                _ensure_usable_venv(
+                    venv_dir,
+                    progress_callback=lambda p, m: self.progress.emit(p, m),
+                )
+            except RuntimeError as e:
+                self.finished.emit(False, str(e))
+                return
             self.progress.emit(10, "Virtual environment ready.")
 
             # Step 2: Verify pip (only needed when not using uv)
