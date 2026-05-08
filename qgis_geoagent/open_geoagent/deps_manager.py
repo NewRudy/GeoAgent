@@ -418,7 +418,7 @@ def _add_existing_python_candidate(
 
 
 def _is_macos_qgis_app_bundle_python(path: str) -> bool:
-    """Return True for Python binaries inside a QGIS macOS .app bundle."""
+    """Return True for unsafe Python launchers in QGIS.app/Contents/MacOS."""
     if not (platform.system() == "Darwin" or sys.platform == "darwin"):
         return False
     parts = os.path.abspath(path).split(os.sep)
@@ -426,7 +426,12 @@ def _is_macos_qgis_app_bundle_python(path: str) -> bool:
         lower = part.lower()
         if not (lower.startswith("qgis") and lower.endswith(".app")):
             continue
-        return idx + 1 < len(parts) and parts[idx + 1] == "Contents"
+        if idx + 2 >= len(parts):
+            return False
+        if parts[idx + 1].lower() != "contents" or parts[idx + 2].lower() != "macos":
+            return False
+        name = os.path.basename(path).lower()
+        return name.startswith("qgis") or _looks_like_python_executable(path)
     return False
 
 
