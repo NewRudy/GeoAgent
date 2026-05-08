@@ -71,6 +71,7 @@ from qgis.PyQt.QtWidgets import (
 
 SETTINGS_PREFIX = "OpenGeoAgent/"
 DEFAULT_PROVIDER = "openai-codex"
+MAX_TOKENS_AUTO_VALUE = 0
 DEFAULT_MODELS = {
     "bedrock": "us.anthropic.claude-sonnet-4-6",
     "openai": "gpt-5.5",
@@ -380,6 +381,42 @@ def _setting(settings, key, default="", value_type=str):
     return settings.value(f"{SETTINGS_PREFIX}{key}", default, type=value_type)
 
 
+def _max_tokens_from_settings(settings):
+    """Read the optional max-token setting; blank/auto means provider default."""
+    value = settings.value(f"{SETTINGS_PREFIX}max_tokens", "", type=str)
+    text = str(value or "").strip()
+    if not text or text.lower() in {"auto", "none", "null"}:
+        return None
+    try:
+        parsed = int(text)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _max_tokens_to_setting(value):
+    """Return the QSettings value for an optional max-token selection.
+
+    Positive values below the historical 256-token minimum are clamped up to
+    256 so that the new Auto sentinel (0) does not silently allow tiny limits
+    that the spinbox previously disallowed.
+    """
+    if value is None:
+        return ""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return ""
+    if parsed <= 0:
+        return ""
+    return max(parsed, 256)
+
+
+def _max_tokens_to_display(value):
+    """Return a diagnostics-friendly display value for optional max tokens."""
+    return value if value is not None else "Auto"
+
+
 def _apply_environment_from_settings(settings):
     """Apply provider credentials from QSettings to the current QGIS process."""
     # Mapping of QSettings key names to environment variable names. The strings
@@ -415,6 +452,33 @@ def _format_chat_worker_error(exc, provider="", agent_mode=""):
     provider_label = provider or "the selected provider"
     mode_label = agent_mode or "this mode"
     is_opera_mode = "opera" in agent_mode.lower()
+
+    try:
+        from geoagent.core.agent import _looks_like_max_tokens_reached
+    except Exception:
+        _looks_like_max_tokens_reached = None
+
+    if _looks_like_max_tokens_reached is not None and _looks_like_max_tokens_reached(
+        exc
+    ):
+        advice = (
+            "The model hit its output-token limit before OpenGeoAgent could "
+            f"finish the {mode_label} tool workflow. This is a model budget "
+            "stop, not a QGIS or Earth Engine load failure."
+        )
+        if provider == "gemini":
+            advice += (
+                "\n\nFor Gemini, increase Settings > Model > Max tokens to "
+                "16384 or 32768 if this persists. Gemini thinking/tool-call "
+                "turns can consume more output tokens than the final visible "
+                "answer."
+            )
+        else:
+            advice += (
+                f"\n\nIncrease Settings > Model > Max tokens for "
+                f"{provider_label}, or retry with a narrower request."
+            )
+        return f"{advice}\n\nOriginal error: {raw}"
 
     if (
         "tlsv1_alert_decode_error" in lower
@@ -1983,15 +2047,25 @@ class ChatWorker(QThread):
             list(tool_metrics.keys()) if isinstance(tool_metrics, dict) else []
         )
         stop_reason = str(getattr(final_result, "stop_reason", "end_turn"))
-        success = stop_reason not in ("cancelled", "guardrail_intervened")
+        failure_stop_reasons = ("cancelled", "guardrail_intervened", "max_tokens")
+        success = stop_reason not in failure_stop_reasons
         if self.isInterruptionRequested():
             success = False
+
+        if success:
+            error_text = ""
+        else:
+            error_text = _format_chat_worker_error(
+                RuntimeError(f"stop_reason={stop_reason}"),
+                provider=self.provider,
+                agent_mode=self.agent_mode,
+            )
 
         self.finished.emit(
             {
                 "success": success,
                 "answer": "".join(chunks) or final_text,
-                "error": "" if success else f"stop_reason={stop_reason}",
+                "error": error_text,
                 "images": images,
                 "tools": ", ".join(executed_tools),
                 "tool_calls": tool_calls,
@@ -3357,7 +3431,7 @@ class ChatDockWidget(QDockWidget):
         permission_profile = self.permission_combo.currentText()
         if permission_profile == "Trusted auto-approve":
             auto_approve_tools = True
-        max_tokens = self.settings.value(f"{SETTINGS_PREFIX}max_tokens", 4096, type=int)
+        max_tokens = _max_tokens_from_settings(self.settings)
         image_model = _image_model_from_settings(self.settings)
         if not prompt:
             prompt = "Describe the attached image."

@@ -40,6 +40,11 @@ def test_litellm_config_is_valid() -> None:
     assert cfg.model == "openai/gpt-5.5"
 
 
+def test_max_tokens_defaults_to_provider_auto() -> None:
+    """Verify default config leaves output token limits to the provider."""
+    assert GeoAgentConfig().max_tokens is None
+
+
 def test_openai_codex_config_is_valid() -> None:
     """Verify that OpenAI Codex OAuth is accepted as a provider."""
     cfg = GeoAgentConfig(provider="openai-codex", model="gpt-5.5")
@@ -165,6 +170,74 @@ def test_openai_codex_requires_token(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="ChatGPT OAuth access token"):
         resolve_model(GeoAgentConfig(provider="openai-codex"))
+
+
+def test_resolve_gemini_auto_omits_max_output_tokens(monkeypatch) -> None:
+    """Verify Gemini auto mode leaves max output tokens to the provider."""
+
+    class FakeGeminiModel:
+        """Capture Gemini constructor arguments."""
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    module = types.ModuleType("strands.models.gemini")
+    module.GeminiModel = FakeGeminiModel
+    monkeypatch.setitem(sys.modules, "strands", types.ModuleType("strands"))
+    monkeypatch.setitem(
+        sys.modules,
+        "strands.models",
+        types.ModuleType("strands.models"),
+    )
+    monkeypatch.setitem(sys.modules, "strands.models.gemini", module)
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+    model = resolve_model(
+        GeoAgentConfig(
+            provider="gemini",
+            model="gemini-3.1-pro-preview",
+            temperature=0,
+        )
+    )
+
+    assert isinstance(model, FakeGeminiModel)
+    assert model.kwargs == {
+        "client_args": {"api_key": "test-key"},
+        "model_id": "gemini-3.1-pro-preview",
+        "params": {"temperature": 0},
+    }
+
+
+def test_resolve_gemini_preserves_explicit_token_limit(monkeypatch) -> None:
+    """Verify explicit Gemini token limits are preserved."""
+
+    class FakeGeminiModel:
+        """Capture Gemini constructor arguments."""
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    module = types.ModuleType("strands.models.gemini")
+    module.GeminiModel = FakeGeminiModel
+    monkeypatch.setitem(sys.modules, "strands", types.ModuleType("strands"))
+    monkeypatch.setitem(
+        sys.modules,
+        "strands.models",
+        types.ModuleType("strands.models"),
+    )
+    monkeypatch.setitem(sys.modules, "strands.models.gemini", module)
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    model = resolve_model(
+        GeoAgentConfig(
+            provider="gemini",
+            model="gemini-3.1-pro-preview",
+            max_tokens=16384,
+        )
+    )
+
+    assert model.kwargs["params"]["max_output_tokens"] == 16384
 
 
 def test_resolve_litellm_model(monkeypatch) -> None:

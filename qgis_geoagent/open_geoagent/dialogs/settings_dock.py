@@ -7,8 +7,15 @@ import sys
 import time
 
 from qgis.PyQt.QtCore import Qt, QSettings, QThread, QTimer, QUrl, pyqtSignal
-from qgis.PyQt.QtGui import QDesktopServices, QFont, QGuiApplication, QKeySequence
+from qgis.PyQt.QtGui import (
+    QDesktopServices,
+    QFont,
+    QGuiApplication,
+    QKeySequence,
+    QValidator,
+)
 from qgis.PyQt.QtWidgets import (
+    QAbstractSpinBox,
     QCheckBox,
     QComboBox,
     QDockWidget,
@@ -35,10 +42,14 @@ from .chat_dock import (
     DEFAULT_TRANSCRIPTION_MODEL,
     DEFAULT_VOICE_SHORTCUT,
     IMAGE_MODELS,
+    MAX_TOKENS_AUTO_VALUE,
     PROVIDERS,
     SETTINGS_PREFIX,
     TRANSCRIPTION_MODELS,
     VOICE_SHORTCUT_SETTING,
+    _max_tokens_from_settings,
+    _max_tokens_to_display,
+    _max_tokens_to_setting,
 )
 from ..oauth import (
     CODEX_DEFAULT_CONFIG,
@@ -202,9 +213,7 @@ def collect_diagnostics(
                 type=str,
             )
             or DEFAULT_VOICE_SHORTCUT,
-            "max_tokens": settings.value(
-                f"{SETTINGS_PREFIX}max_tokens", 4096, type=int
-            ),
+            "max_tokens": _max_tokens_to_display(_max_tokens_from_settings(settings)),
         },
         "credential_presence": credential_presence,
         "latest_install_status": latest_install_status,
@@ -236,7 +245,6 @@ class ProviderTestWorker(QThread):
             from geoagent.core.model import resolve_model
             from strands import Agent
 
-            token_floor = 4096 if self.provider == "ollama" else 1024
             cfg = GeoAgentConfig(
                 provider=self.provider,
                 model=self.model_id or None,
@@ -245,7 +253,7 @@ class ProviderTestWorker(QThread):
                     if _model_requires_default_temperature(self.provider, self.model_id)
                     else 0
                 ),
-                max_tokens=max(int(self.max_tokens or token_floor), token_floor),
+                max_tokens=self.max_tokens,
             )
             model = resolve_model(cfg)
             agent = Agent(
@@ -267,6 +275,37 @@ def _enum_value(cls, enum_name, member_name):
     """Return an enum member from either scoped or legacy Qt APIs."""
     container = getattr(cls, enum_name, cls)
     return getattr(container, member_name)
+
+
+class _OptionalMaxTokensSpinBox(QSpinBox):
+    """Spin box that treats blank or Auto text as provider-default tokens."""
+
+    def validate(self, text, pos):
+        """Accept blank/Auto text so users can clear the field."""
+        cleaned = str(text or "").strip()
+        if not cleaned or "auto".startswith(cleaned.lower()):
+            state = _enum_value(QValidator, "State", "Acceptable")
+            return state, text, pos
+        return super().validate(text, pos)
+
+    def valueFromText(self, text):
+        """Convert blank/Auto text to the Auto sentinel."""
+        cleaned = str(text or "").strip()
+        if not cleaned or "auto".startswith(cleaned.lower()):
+            return MAX_TOKENS_AUTO_VALUE
+        return super().valueFromText(text)
+
+    def textFromValue(self, value):
+        """Display the Auto sentinel as text instead of ``0``."""
+        if int(value) <= MAX_TOKENS_AUTO_VALUE:
+            return "Auto"
+        return super().textFromValue(value)
+
+    def fixup(self, text):
+        """Normalize blank text to Auto during spinbox correction."""
+        if not str(text or "").strip():
+            return "Auto"
+        return super().fixup(text)
 
 
 def _key_sequence_text(sequence):
@@ -537,9 +576,13 @@ class SettingsDockWidget(QDockWidget):
         self.fast_check = QCheckBox("Use fast GeoAgent prompt")
         form.addRow("", self.fast_check)
 
-        self.max_tokens_spin = QSpinBox()
-        self.max_tokens_spin.setRange(256, 32768)
-        self.max_tokens_spin.setValue(4096)
+        self.max_tokens_spin = _OptionalMaxTokensSpinBox()
+        self.max_tokens_spin.setRange(MAX_TOKENS_AUTO_VALUE, 32768)
+        self.max_tokens_spin.setSpecialValueText("Auto")
+        self.max_tokens_spin.setCorrectionMode(
+            _enum_value(QAbstractSpinBox, "CorrectionMode", "CorrectToNearestValue")
+        )
+        self.max_tokens_spin.setValue(MAX_TOKENS_AUTO_VALUE)
         self.max_tokens_spin.setSingleStep(256)
         form.addRow("Max tokens:", self.max_tokens_spin)
 
@@ -973,7 +1016,7 @@ class SettingsDockWidget(QDockWidget):
             self.settings.value(f"{SETTINGS_PREFIX}fast_mode", False, type=bool)
         )
         self.max_tokens_spin.setValue(
-            self.settings.value(f"{SETTINGS_PREFIX}max_tokens", 4096, type=int)
+            _max_tokens_from_settings(self.settings) or MAX_TOKENS_AUTO_VALUE
         )
         transcription_model = (
             self.settings.value(
@@ -1052,7 +1095,8 @@ class SettingsDockWidget(QDockWidget):
             f"{SETTINGS_PREFIX}fast_mode", self.fast_check.isChecked()
         )
         self.settings.setValue(
-            f"{SETTINGS_PREFIX}max_tokens", self.max_tokens_spin.value()
+            f"{SETTINGS_PREFIX}max_tokens",
+            _max_tokens_to_setting(self.max_tokens_spin.value()),
         )
         self.settings.setValue(
             f"{SETTINGS_PREFIX}transcription_model",
@@ -1097,7 +1141,7 @@ class SettingsDockWidget(QDockWidget):
         self._provider_test_worker = ProviderTestWorker(
             provider,
             model_id,
-            self.max_tokens_spin.value(),
+            _max_tokens_from_settings(self.settings),
             self.settings,
             self,
         )

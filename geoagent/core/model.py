@@ -8,8 +8,10 @@ from typing import Any
 from geoagent.core.config import GeoAgentConfig, ProviderName
 
 
-def _openai_token_params(model_id: str, max_tokens: int) -> dict[str, int]:
+def _openai_token_params(model_id: str, max_tokens: int | None) -> dict[str, int]:
     """Return the token-limit parameter supported by the OpenAI model family."""
+    if max_tokens is None:
+        return {}
     normalized = str(model_id or "").lower()
     completion_prefixes = (
         "gpt-5",
@@ -42,6 +44,13 @@ def _model_uses_default_temperature_only(model_id: str) -> bool:
     )
 
 
+def _token_param(name: str, max_tokens: int | None) -> dict[str, int]:
+    """Return a provider token parameter only when explicitly configured."""
+    if max_tokens is None:
+        return {}
+    return {name: int(max_tokens)}
+
+
 def resolve_model(config: GeoAgentConfig | None = None, **overrides: Any) -> Any:
     """Build a Strands model from :class:`GeoAgentConfig` or kwargs overrides.
 
@@ -61,7 +70,8 @@ def resolve_model(config: GeoAgentConfig | None = None, **overrides: Any) -> Any
         model_id = cfg.model or os.environ.get(
             "BEDROCK_MODEL", "us.anthropic.claude-sonnet-4-6"
         )
-        params = {"temperature": cfg.temperature, "max_tokens": cfg.max_tokens}
+        params = {"temperature": cfg.temperature}
+        params.update(_token_param("max_tokens", cfg.max_tokens))
         return BedrockModel(model_id=model_id, params=params)
 
     if provider == "openai":
@@ -126,11 +136,14 @@ def resolve_model(config: GeoAgentConfig | None = None, **overrides: Any) -> Any
 
         model_id = cfg.model or os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
         client_args = dict(cfg.client_args)
+        kwargs: dict[str, Any] = {}
+        if cfg.max_tokens is not None:
+            kwargs["max_tokens"] = int(cfg.max_tokens)
         return AnthropicModel(
             client_args=client_args or None,
             model_id=model_id,
-            max_tokens=cfg.max_tokens,
             params={"temperature": cfg.temperature},
+            **kwargs,
         )
 
     if provider == "gemini":
@@ -144,13 +157,12 @@ def resolve_model(config: GeoAgentConfig | None = None, **overrides: Any) -> Any
         api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
         if api_key and "api_key" not in client_args:
             client_args["api_key"] = api_key
+        params = {"temperature": cfg.temperature}
+        params.update(_token_param("max_output_tokens", cfg.max_tokens))
         return GeminiModel(
             client_args=client_args or None,
             model_id=model_id,
-            params={
-                "temperature": cfg.temperature,
-                "max_output_tokens": cfg.max_tokens,
-            },
+            params=params,
         )
 
     if provider == "ollama":
@@ -160,11 +172,14 @@ def resolve_model(config: GeoAgentConfig | None = None, **overrides: Any) -> Any
             "OLLAMA_HOST", "http://127.0.0.1:11434"
         )
         model_id = cfg.model or os.environ.get("OLLAMA_MODEL", "qwen3.5:4b")
+        kwargs = {}
+        if cfg.max_tokens is not None:
+            kwargs["max_tokens"] = int(cfg.max_tokens)
         return OllamaModel(
             host,
             model_id=model_id,
             temperature=cfg.temperature,
-            max_tokens=cfg.max_tokens,
+            **kwargs,
         )
 
     if provider == "litellm":
@@ -178,7 +193,7 @@ def resolve_model(config: GeoAgentConfig | None = None, **overrides: Any) -> Any
         base_url = cfg.litellm_base_url or os.environ.get("LITELLM_BASE_URL")
         if base_url and "base_url" not in client_args:
             client_args["base_url"] = base_url
-        params = {"max_tokens": cfg.max_tokens}
+        params = _token_param("max_tokens", cfg.max_tokens)
         if not _model_uses_default_temperature_only(model_id):
             params["temperature"] = cfg.temperature
         return LiteLLMModel(
