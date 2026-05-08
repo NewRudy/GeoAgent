@@ -46,7 +46,7 @@ icon=icons/icon.svg
 experimental=False
 deprecated=False
 
-changelog=
+changelog=Bump OpenGeoAgent QGIS plugin patch version.
     1.7.1 - Patch release
         - Raised package and plugin version metadata to 1.7.1
         - Raised the plugin dependency guidance to GeoAgent 1.7.1
