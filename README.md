@@ -91,6 +91,7 @@ and `pydantic`. Geospatial packages and provider clients are optional extras:
 | `GeoAgent[geoai]`       | geoai integration dependencies.                                   |
 | `GeoAgent[earthengine]` | Google Earth Engine dependencies.                                 |
 | `GeoAgent[ui]`          | Solara UI dependencies.                                           |
+| `GeoAgent[browser]`     | FastAPI WebSocket backend for browser MapLibre apps.              |
 | `GeoAgent[providers]`   | OpenAI, Anthropic, Gemini, Ollama, and LiteLLM provider clients.  |
 | `GeoAgent[all]`         | Most optional integrations. QGIS itself remains system-installed. |
 
@@ -237,6 +238,32 @@ The Solara UI opens directly to a map chat workspace with provider/model
 controls, fast mode, session chat history, compact tool-call results, and a
 conservative confirmation policy. Confirmation-required tools are denied by
 default unless you enable auto-approve in the UI.
+
+Use GeoAgent from a custom browser MapLibre app:
+
+```bash
+pip install "GeoAgent[browser]"
+geoagent codex login
+geoagent browser --host 127.0.0.1 --port 8765 --model gpt-5.5
+```
+
+Then open the end-to-end example in
+`examples/browser_maplibre/`. The page connects to `/geoagent/ws`, sends chat
+prompts, executes `map_command` messages against a live MapLibre map, and
+returns `map_command_result` messages to the backend. The browser backend uses
+the `openai-codex` provider by default; pass `--provider` to use a different
+provider.
+
+A TypeScript/Vite version is available in
+`examples/browser_maplibre_typescript/`.
+
+For local sessions where you want PyQGIS-style fallback behavior, add
+`--allow-browser-code`. This exposes `run_maplibre_script`, allowing the agent
+to execute generated MapLibre JavaScript in the browser when no dedicated tool
+fits the request.
+
+To let the agent remove or clear browser map layers in trusted local sessions,
+add `--auto-approve-browser-tools`.
 
 Use GeoAgent inside QGIS:
 

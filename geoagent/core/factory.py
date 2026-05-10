@@ -14,6 +14,7 @@ from geoagent.core.registry import (
 from geoagent.core.safety import ConfirmCallback
 from geoagent.core.agent import GeoAgent
 from geoagent.tools.anymap import anymap_tools
+from geoagent.tools.browser_maplibre import browser_maplibre_tools
 from geoagent.tools.geoai import geoai_tools
 from geoagent.tools.gee_data_catalogs import gee_data_catalogs_tools
 from geoagent.tools.images import image_generation_tools
@@ -307,6 +308,34 @@ Workflow guidance:
   validates the raster.
 - Keep responses concise and include catalog URL, collection, item id, asset
   key, and layer name when available.
+"""
+
+BROWSER_MAPLIBRE_SYSTEM_PROMPT = """\
+You are an AI assistant embedded in a browser web app with access to a live
+MapLibre map through safe browser tools.
+
+Workflow guidance:
+- Use browser map tools for map navigation, layer inspection, marker creation,
+  GeoJSON display, layer visibility, feature queries, and screenshots.
+- Coordinates in user-facing prompts are latitude/longitude, but browser map
+  internals use longitude/latitude. Use the tool parameter names exactly.
+- Do not ask the user to paste JavaScript or run Python for actions that the
+  browser map tools can perform.
+- If a requested operation has no browser map tool, explain the limitation
+  briefly rather than trying to execute arbitrary JavaScript.
+- Keep responses concise and include layer names, locations, and tool results
+  when useful.
+"""
+
+BROWSER_MAPLIBRE_CODE_SYSTEM_PROMPT = """\
+Browser JavaScript code execution is enabled for this local session.
+
+When no dedicated browser map tool can perform the requested MapLibre
+operation, write a short JavaScript snippet and run it with
+run_maplibre_script. The snippet executes in the browser with these names in
+scope: map, maplibregl, and helpers. Prefer MapLibre GL JS API calls, keep code
+focused on map operations, and avoid credential handling, storage access,
+unrelated DOM manipulation, or broad network operations.
 """
 
 
@@ -610,6 +639,54 @@ def for_anymap(
         extra_tools=extra_tools,
         fast=fast,
     )
+    cfg = config or GeoAgentConfig()
+    if provider is not None:
+        cfg = cfg.model_copy(update={"provider": provider})
+    if model_id is not None:
+        cfg = cfg.model_copy(update={"model": model_id})
+    return GeoAgent(
+        context=ctx,
+        config=cfg,
+        tools=tools,
+        registry=registry,
+        model=model,
+        provider=provider,
+        model_id=model_id,
+        fast=fast,
+        confirm=confirm,
+    )
+
+
+def for_browser_maplibre(
+    session: Any,
+    *,
+    config: GeoAgentConfig | None = None,
+    model: Any | None = None,
+    provider: str | None = None,
+    model_id: str | None = None,
+    fast: bool = False,
+    confirm: ConfirmCallback | None = None,
+    extra_tools: Optional[list[Any]] = None,
+    allow_browser_code: bool = False,
+) -> GeoAgent:
+    """Bind an agent to a MapLibre map running in a browser session."""
+    system_prompt = BROWSER_MAPLIBRE_SYSTEM_PROMPT
+    if allow_browser_code:
+        system_prompt = f"{system_prompt}\n\n{BROWSER_MAPLIBRE_CODE_SYSTEM_PROMPT}"
+    ctx = GeoAgentContext(
+        metadata={
+            "integration": "browser_maplibre",
+            "system_prompt": system_prompt,
+        }
+    )
+    tool_list = _filter_by_imports(
+        browser_maplibre_tools(session, allow_code=allow_browser_code)
+    )
+    if extra_tools:
+        tool_list.extend(extra_tools)
+    registry = GeoToolRegistry()
+    register_all_tools(registry, tool_list)
+    tools = collect_tools_for_context(tool_list, fast=fast, registry=registry)
     cfg = config or GeoAgentConfig()
     if provider is not None:
         cfg = cfg.model_copy(update={"provider": provider})
