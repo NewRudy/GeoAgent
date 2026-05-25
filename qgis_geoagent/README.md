@@ -22,7 +22,7 @@ GitHub update checker.
 - Tool permission profiles, defaulting to trusted auto-approval
 - Project-scoped chat history with Markdown import/export
 - Compact jobs panel for active and completed GeoAgent requests
-- Provider and model controls for Bedrock, OpenAI, ChatGPT/Codex OAuth, Anthropic, Google Gemini, Ollama, and LiteLLM
+- Provider and model controls for Bedrock, OpenAI, ChatGPT/Codex OAuth, Anthropic, Google Gemini, Ollama, LiteLLM, and vLLM
 - Settings panel for model defaults, API keys, hosts, AWS region, provider
   smoke tests, and redacted diagnostics export
 - Dependency installer that installs core provider packages or selected
@@ -124,6 +124,12 @@ applied to the current QGIS process before each chat request:
 - Bedrock: `AWS_REGION` plus the normal AWS credential chain
 - Ollama: `OLLAMA_HOST`
 - LiteLLM: `LITELLM_API_KEY` and optional `LITELLM_BASE_URL`
+- vLLM: `VLLM_BASE_URL` and optional `VLLM_API_KEY`
+
+vLLM requires a separately running vLLM server. The model id is supplied via
+the **Model** setting (or `VLLM_MODEL_ID` if no QGIS setting is saved). GeoAgent
+tool use requires the server to be started with tool-calling support for the
+selected model and chat template.
 
 Default models:
 
@@ -136,6 +142,7 @@ Default models:
 | Google Gemini | `gemini-3.1-pro-preview` |
 | Ollama | `qwen3.5:4b` |
 | LiteLLM | `openai/gpt-5.5` |
+| vLLM | Use `VLLM_MODEL_ID` or enter a model |
 
 ## Chat Workflow
 
