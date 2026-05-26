@@ -96,6 +96,16 @@ and `pydantic`. Geospatial packages and provider clients are optional extras:
 | `GeoAgent[providers]`   | OpenAI, Anthropic, Gemini, Ollama, LiteLLM, and vLLM clients.     |
 | `GeoAgent[all]`         | Most optional integrations. QGIS itself remains system-installed. |
 
+EvoSkill is supported as a development workflow for evolving Codex-compatible
+GeoAgent skills, but it is not bundled as a GeoAgent extra. Install it from
+its repository when needed:
+
+```bash
+pip install "git+https://github.com/sentient-agi/EvoSkill.git"
+```
+
+See [EvoSkill](docs/evoskill.md) for the Codex-oriented setup.
+
 Examples:
 
 ```bash
@@ -523,6 +533,8 @@ Runnable notebooks live under `docs/examples/`:
 - `docs/examples/qgis_agent.ipynb` — QGIS-oriented workflow using mocks.
 - `docs/examples/stac_workflow.ipynb` — STAC catalog search and mock QGIS loading.
 - `examples/nasa_opera_qgis.py` — NASA OPERA workflow for QGIS.
+- `examples/evoskill/`: EvoSkill starter prompt for evolving GeoAgent coding
+  skills.
 
 Prompt ideas:
 

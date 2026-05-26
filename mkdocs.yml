@@ -76,6 +76,7 @@ nav:
     - Home: index.md
     - Installation: installation.md
     - Usage: usage.md
+    - EvoSkill: evoskill.md
     - QGIS Plugin: qgis-plugin.md
     - Changelog: https://github.com/opengeos/GeoAgent/releases
     - Report Issues: https://github.com/opengeos/GeoAgent/issues
