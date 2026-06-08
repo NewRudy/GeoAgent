@@ -4,6 +4,7 @@ Commands:
   geoagent ui              Launch the Solara UI
   geoagent browser         Launch the browser WebSocket backend
   geoagent codex login     Login with ChatGPT/Codex OAuth
+  geoagent smoke           Run no-network cold-checkout smoke checks
   geoagent --help          Show help
 """
 
@@ -109,6 +110,16 @@ def _run_codex_logout(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_smoke(args: argparse.Namespace) -> int:
+    """Run no-network cold-checkout smoke checks."""
+    from geoagent.smoke import main as smoke_main
+
+    argv = ["--output", args.output]
+    if args.no_write:
+        argv.append("--no-write")
+    return smoke_main(argv)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the script entry point."""
     parser = argparse.ArgumentParser(
@@ -153,6 +164,22 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     browser_parser.set_defaults(func=_run_browser_server)
+
+    smoke_parser = subparsers.add_parser(
+        "smoke",
+        help="Run no-network cold-checkout smoke checks",
+    )
+    smoke_parser.add_argument(
+        "--output",
+        default="geoagent_smoke_result.json",
+        help="JSON summary output path.",
+    )
+    smoke_parser.add_argument(
+        "--no-write",
+        action="store_true",
+        help="Print JSON without writing the output file.",
+    )
+    smoke_parser.set_defaults(func=_run_smoke)
 
     codex_parser = subparsers.add_parser(
         "codex",
@@ -209,6 +236,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "ui":
         return _run_solara_app()
     if args.command == "browser":
+        return args.func(args)
+    if args.command == "smoke":
         return args.func(args)
     if args.command == "codex":
         if hasattr(args, "func"):

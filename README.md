@@ -202,6 +202,27 @@ qwen_agent = GeoAgent(
 
 ## Quickstart
 
+### Cold-checkout smoke
+
+Use this first when you only want to know whether the local repo is importable
+and safe to verify without API keys, network access, or QGIS:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
+python -m geoagent.smoke
+# or
+make smoke
+```
+
+Expected result: `geoagent_smoke_result.json` is written and `all_passed` is
+`true`. This smoke checks importability, core public symbols, config creation,
+registry basics, QGIS-outside-QGIS safety, testing mocks, the `@geo_tool`
+decorator, and Qt fallback behavior. It does not prove LLM provider quality,
+real QGIS integration, geospatial analysis accuracy, product maturity, or
+competition readiness.
+
 Use GeoAgent directly when you do not need a map or package-specific toolset:
 
 ```python
